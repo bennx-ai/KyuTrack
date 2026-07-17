@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>九州旅行开销记录</title>
+<meta name="description" content="九州旅行开销记录 — 离线记账与分账工具">
+<meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="九州开销">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="onboarding" class="onboarding">
+  <div class="ob-card">
+    <h1 class="ob-title">九州旅行开销记录</h1>
+
+    <div id="ob-step-1">
+      <p class="ob-desc">先设置携带的初始金额，之后可以在「设置」里修改。</p>
+      <div class="form-group">
+        <label>携带现金总额 (JPY)</label>
+        <input type="number" id="ob-cash" min="0" step="1" placeholder="例如 100000">
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label"><input type="checkbox" id="ob-card-enabled"> 追踪卡内余额（可选）</label>
+        <input type="number" id="ob-card" min="0" step="1" placeholder="卡内可用余额" disabled>
+      </div>
+      <button type="button" class="primary-btn" id="ob-next">下一步</button>
+    </div>
+
+    <div id="ob-step-2" class="hidden">
+      <p class="ob-desc">添加同行伙伴（可随时在「设置」里增删改）。</p>
+      <div id="ob-people-list"></div>
+      <button type="button" class="secondary-btn" id="ob-add-person">＋ 新增伙伴</button>
+      <div class="ob-actions">
+        <button type="button" class="secondary-btn" id="ob-back">上一步</button>
+        <button type="button" class="primary-btn" id="ob-finish">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <h1 id="page-title">总览</h1>
+  </header>
+
+  <main id="view-overview" class="view"></main>
+  <main id="view-expenses" class="view hidden"></main>
+  <main id="view-stats" class="view hidden"></main>
+  <main id="view-split" class="view hidden"></main>
+  <main id="view-settings" class="view hidden"></main>
+
+  <button id="fab-add" class="fab" aria-label="记一笔开销">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+
+  <nav class="bottom-nav">
+    <button data-view="overview">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-9"/><path d="M10 20v-5h4v5"/></svg></span>
+      总览
+    </button>
+    <button data-view="expenses">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="8.5" y1="8" x2="15.5" y2="8"/><line x1="8.5" y1="12" x2="15.5" y2="12"/><line x1="8.5" y1="16" x2="13" y2="16"/></svg></span>
+      记录
+    </button>
+    <button data-view="stats">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="20" x2="5" y2="12"/><line x1="12" y1="20" x2="12" y2="6"/><line x1="19" y1="20" x2="19" y2="15"/></svg></span>
+      统计
+    </button>
+    <button data-view="split">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.3"/><path d="M14.5 12.2c2.6.3 4.5 2.1 4.8 4.8"/></svg></span>
+      分账
+    </button>
+    <button data-view="settings">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="14" cy="7" r="2"/><line x1="4" y1="14" x2="20" y2="14"/><circle cx="9" cy="14" r="2"/><line x1="4" y1="19" x2="20" y2="19"/><circle cx="16" cy="19" r="2"/></svg></span>
+      设置
+    </button>
+  </nav>
+</div>
+
+<div id="expense-modal" class="modal hidden"></div>
+<div id="photo-viewer" class="photo-viewer hidden"></div>
+<div id="toast" class="toast"></div>
+
+<script src="js/db.js"></script>
+<script src="js/debts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
