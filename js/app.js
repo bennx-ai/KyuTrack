@@ -13,6 +13,9 @@ const PAYMENT_METHODS = [
   { id: 'cash', label: '现金' },
   { id: 'card', label: '卡' },
 ];
+const PAYMENT_METHOD_LABELS = { cash: '现金', card: '卡' };
+const TRANSIT_MODES = ['巴士', '地铁', '新干线', '电车', '脚踏车', '渡轮', '其它'];
+const TRANSIT_USAGE_LABELS = { card: '交通卡扣款', pass: '已购套票' };
 
 // ---- Line icons (stroke=currentColor so they follow text/theme color automatically) ----
 const ICON_PATHS = {
@@ -20,6 +23,7 @@ const ICON_PATHS = {
   card: '<rect x="3" y="6" width="18" height="13" rx="2"/><line x1="3" y1="10.5" x2="21" y2="10.5"/><line x1="6" y1="15" x2="10" y2="15"/>',
   users: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.3"/><path d="M14.5 12.2c2.6.3 4.5 2.1 4.8 4.8"/>',
   camera: '<path d="M4 8a2 2 0 0 1 2-2h1.2l.9-1.5a1 1 0 0 1 .86-.5h6.08a1 1 0 0 1 .86.5L16.8 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/><circle cx="12" cy="13" r="3.2"/>',
+  bus: '<rect x="4" y="5" width="16" height="11" rx="2"/><line x1="4" y1="11" x2="20" y2="11"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/>',
 };
 function icon(name, size = 18) {
   return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name]}</svg>`;
@@ -48,6 +52,10 @@ const FormState = {
   taxAmount: '', // optional service charge/tax, split proportionally to customAmounts
   settledMap: new Map(), // personId -> {settled, settledMethod, settledDate}, carried over when editing
   photo: null, // compressed data URL, or null
+  transitSubtype: null, // null | 'topup' | 'pass' | 'single' — only meaningful when category === 'transport'
+  transitFrom: '',
+  transitTo: '',
+  transitMode: '',
 };
 
 // Resizes+recompresses a picked photo before storing it, so a multi-MB camera
@@ -230,7 +238,7 @@ function navigate(view) {
   document.querySelectorAll('.bottom-nav button').forEach((b) => {
     b.classList.toggle('active', b.dataset.view === view);
   });
-  const titles = { overview: '总览', expenses: '记录', stats: '统计', split: '分账', settings: '设置' };
+  const titles = { overview: '总览', expenses: '记录', transit: '交通卡', split: '分账', settings: '设置' };
   byId('page-title').textContent = titles[view] || '';
   renderCurrentView();
 }
@@ -238,7 +246,7 @@ function navigate(view) {
 function renderCurrentView() {
   if (State.activeView === 'overview') renderOverview();
   else if (State.activeView === 'expenses') renderExpensesList();
-  else if (State.activeView === 'stats') renderStats();
+  else if (State.activeView === 'transit') renderTransit();
   else if (State.activeView === 'split') renderSplit();
   else if (State.activeView === 'settings') renderSettings();
 }
@@ -275,6 +283,13 @@ function isMyExpense(e) {
 // left my wallet," which for a split expense I fronted includes everyone else's
 // share too. A non-split expense is assumed entirely personal, same as above.
 function myShare(e) {
+  // A transit-card top-up just moves money from cash/card into the card balance —
+  // it isn't real consumption, so it must not also count as 交通 spend (that
+  // would double-count once here and again when the loaded value is actually spent).
+  if (e.transitSubtype === 'topup') return 0;
+  // Same logic for a leg covered by an already-bought pass: the real cost was
+  // already counted once when the pass itself was purchased.
+  if (e.transitSubtype === 'single' && e.transitUsage === 'pass') return 0;
   const selfId = State.settings.selfPersonId;
   if (!e.isSplit) return e.amount;
   if (!selfId) return e.amount;
@@ -291,18 +306,25 @@ function settlementFlows() {
   const selfId = State.settings.selfPersonId;
   let cash = 0;
   let card = 0;
-  if (!selfId) return { cash, card };
+  // Further split by the *original* payment method of the underlying expense,
+  // so "分账收回" can show separately whether the cash/card that moved was
+  // tied to a cash-fronted or card-fronted expense.
+  const cashByOrigin = { cash: 0, card: 0 };
+  const cardByOrigin = { cash: 0, card: 0 };
+  if (!selfId) return { cash, card, cashByOrigin, cardByOrigin };
   for (const exp of State.expenses) {
     if (!exp.isSplit || !Array.isArray(exp.participants)) continue;
     for (const p of exp.participants) {
       if (!p.settled || p.personId === exp.payerId) continue;
       const sign = exp.payerId === selfId ? 1 : p.personId === selfId ? -1 : 0;
       if (sign === 0) continue;
-      if (p.settledMethod === 'card') card += sign * p.amount;
-      else cash += sign * p.amount;
+      const amt = sign * p.amount;
+      const origin = exp.paymentMethod === 'card' ? 'card' : 'cash';
+      if (p.settledMethod === 'card') { card += amt; cardByOrigin[origin] += amt; }
+      else { cash += amt; cashByOrigin[origin] += amt; }
     }
   }
-  return { cash, card };
+  return { cash, card, cashByOrigin, cardByOrigin };
 }
 
 function renderOverview() {
@@ -316,6 +338,15 @@ function renderOverview() {
   const flowLine = (flow, label) => flow !== 0
     ? `<div class="stat-sub flow-line ${flow > 0 ? 'positive' : 'negative'}">${label}${flow > 0 ? '收回' : '付出'} ${signedYen(flow)}</div>`
     : '';
+  // Renders one sub-line per origin (cash-fronted / card-fronted expense) instead
+  // of collapsing them into a single total, so it's clear which underlying
+  // expense a given cash/card movement came from.
+  const flowLinesByOrigin = (byOrigin) => {
+    const parts = [];
+    if (byOrigin.cash !== 0) parts.push(flowLine(byOrigin.cash, '现金垫付'));
+    if (byOrigin.card !== 0) parts.push(flowLine(byOrigin.card, '卡垫付'));
+    return parts.join('');
+  };
 
   let cardHtml;
   if (s.cardEnabled && s.initialCard != null) {
@@ -323,7 +354,7 @@ function renderOverview() {
     cardHtml = `<div class="stat-value ${cardLeft < 0 ? 'negative' : ''}">${yen(cardLeft)}</div>
       <div class="stat-sub">已花费 ${yen(cardSpent)} / 初始 ${yen(s.initialCard)}</div>
       ${budgetBarHtml(cardSpent, s.initialCard)}
-      ${flowLine(flows.card, '分账')}`;
+      ${flowLinesByOrigin(flows.cardByOrigin)}`;
   } else {
     cardHtml = `<div class="stat-value muted">未设置</div><div class="stat-sub">已花费 ${yen(cardSpent)}</div>`;
   }
@@ -349,7 +380,7 @@ function renderOverview() {
       <div class="stat-value ${cashLeft < 0 ? 'negative' : ''}">${yen(cashLeft)}</div>
       <div class="stat-sub">已花费 ${yen(cashSpent)} / 初始 ${yen(s.initialCash)}</div>
       ${budgetBarHtml(cashSpent, s.initialCash)}
-      ${flowLine(flows.cash, '分账')}
+      ${flowLinesByOrigin(flows.cashByOrigin)}
     </div>
     <div class="stat-card">
       <div class="stat-label">${icon('card')} 剩余卡内余额</div>
@@ -359,6 +390,7 @@ function renderOverview() {
       <div class="stat-label">我的个人花费</div>
       <div class="stat-value">${yen(myTotalSpend)}</div>
       <div class="stat-sub">共 ${State.expenses.length} 笔记录${s.selfPersonId ? '（不含代垫他人的部分）' : ''}</div>
+      ${renderCategoryBreakdownHtml()}
     </div>
     ${debtCardHtml}
     <button class="secondary-btn" id="ov-add-btn">＋ 记一笔开销</button>
@@ -392,7 +424,7 @@ function renderExpensesList() {
 
 function renderExpenseRow(e) {
   const cat = CATEGORY_MAP[e.category];
-  const pm = PAYMENT_METHODS.find((p) => p.id === e.paymentMethod);
+  const pmLabel = PAYMENT_METHOD_LABELS[e.paymentMethod] || e.paymentMethod;
   const mine = e.isSplit ? myShare(e) : null;
   return `
     <div class="expense-row" data-id="${e.id}">
@@ -404,7 +436,7 @@ function renderExpenseRow(e) {
         </div>
         <div class="expense-sub">
           <span>${e.date}</span>
-          <span>${pm.label}</span>
+          <span>${pmLabel}</span>
           ${e.note ? `<span class="expense-note">${escapeHtml(e.note)}</span>` : ''}
           ${e.isSplit ? '<span class="split-badge">分账</span>' : ''}
           ${e.photo ? `<span class="expense-photo-badge">${icon('camera', 13)}</span>` : ''}
@@ -413,8 +445,8 @@ function renderExpenseRow(e) {
     </div>`;
 }
 
-// ---- Category stats ----
-function renderStats() {
+// ---- Category breakdown (shown inline on Overview, under 我的个人花费) ----
+function renderCategoryBreakdownHtml() {
   const totals = new Map();
   for (const e of State.expenses) {
     totals.set(e.category, (totals.get(e.category) || 0) + myShare(e));
@@ -424,13 +456,7 @@ function renderStats() {
     .map((c) => ({ ...c, amount: totals.get(c.id) || 0 }))
     .sort((a, b) => b.amount - a.amount);
 
-  const view = byId('view-stats');
-  if (grandTotal === 0) {
-    view.innerHTML = `<p class="empty-hint">还没有花费记录</p>`;
-    return;
-  }
-  view.innerHTML = `
-    <p class="hint-text">以下为你的个人花费${State.settings.selfPersonId ? '（不含代垫他人的部分）' : ''}</p>
+  return `
     <div class="stats-list">
       ${rows.map((r) => {
         const pct = grandTotal ? Math.round((r.amount / grandTotal) * 100) : 0;
@@ -445,9 +471,250 @@ function renderStats() {
           </div>
         </div>`;
       }).join('')}
+    </div>`;
+}
+
+// ---- Transit card (交通卡). 充值/购买套票 are real cash/card spending, entered
+// through the normal "记一笔开销" flow and just listed here for reference. Each
+// individual leg (from/to/mode) is logged directly on this tab instead — using
+// an already-topped-up card or an already-bought pass isn't a new payment, so
+// there's no cash/card method to pick, just which "pocket" it drew from. ----
+function computeTransitBalances() {
+  const total = State.expenses.filter((e) => e.transitSubtype === 'topup' && isMyExpense(e)).reduce((a, e) => a + e.amount, 0);
+  const spent = State.expenses.filter((e) => e.transitSubtype === 'single' && e.transitUsage === 'card').reduce((a, e) => a + e.amount, 0);
+  return { total, spent, left: total - spent };
+}
+
+const LegForm = { show: false, id: null, date: '', from: '', to: '', mode: '', amount: '', usage: 'card' };
+
+function resetLegForm() {
+  LegForm.show = false;
+  LegForm.id = null;
+  LegForm.date = todayStr();
+  LegForm.from = '';
+  LegForm.to = '';
+  LegForm.mode = '';
+  LegForm.amount = '';
+  LegForm.usage = 'card';
+}
+
+function openLegEditor(id) {
+  const leg = State.expenses.find((e) => e.id === id);
+  if (!leg) return;
+  LegForm.id = leg.id;
+  LegForm.date = leg.date;
+  LegForm.from = leg.from || '';
+  LegForm.to = leg.to || '';
+  LegForm.mode = leg.transitMode || '';
+  LegForm.amount = leg.amount ? String(leg.amount) : '';
+  LegForm.usage = leg.transitUsage || 'card';
+  LegForm.show = true;
+  renderTransit();
+}
+
+function renderTransit() {
+  const view = byId('view-transit');
+  const { total, spent, left } = computeTransitBalances();
+
+  const topups = State.expenses.filter((e) => e.transitSubtype === 'topup').sort(sortByDateDesc);
+  const passes = State.expenses.filter((e) => e.transitSubtype === 'pass').sort(sortByDateDesc);
+  const legs = State.expenses.filter((e) => e.transitSubtype === 'single').sort(sortByDateDesc);
+
+  const groups = [];
+  const groupIndex = new Map();
+  for (const leg of legs) {
+    if (!groupIndex.has(leg.date)) {
+      const g = { date: leg.date, legs: [] };
+      groupIndex.set(leg.date, g);
+      groups.push(g);
+    }
+    groupIndex.get(leg.date).legs.push(leg);
+  }
+
+  const listRow = (e, extra) => `
+    <div class="balance-row record-row" data-id="${e.id}">
+      <span>${e.date}${extra ? ' · ' + escapeHtml(extra) : ''}</span>
+      <span>${yen(e.amount)}</span>
+    </div>`;
+  const topupRows = topups.map((e) => listRow(e, PAYMENT_METHOD_LABELS[e.paymentMethod])).join('');
+  const passRows = passes.map((e) => listRow(e, e.note)).join('');
+
+  const dayGroupsHtml = groups.length === 0
+    ? '<p class="empty-hint">还没有交通记录</p>'
+    : groups.map((g) => {
+      const dayTotal = g.legs.reduce((a, leg) => a + leg.amount, 0);
+      return `
+        <div class="expense-debt-card">
+          <div class="expense-debt-header"><div class="expense-debt-title">${g.date}</div></div>
+          <div class="expense-debt-meta no-indent">当日交通花费 ${yen(dayTotal)}</div>
+          <div class="debt-items">
+            ${g.legs.map((leg) => `
+              <div class="debt-item leg-row" data-id="${leg.id}" data-dedicated="${leg.transitUsage ? '1' : '0'}">
+                <div class="debt-item-row">
+                  <span class="tx-text">${escapeHtml(leg.transitMode)}　${escapeHtml(leg.from || '')} → ${escapeHtml(leg.to || '')}</span>
+                  <span class="tx-amount">${leg.amount > 0 ? yen(leg.amount) : '—'}</span>
+                </div>
+                <div class="hint-text">${TRANSIT_USAGE_LABELS[leg.transitUsage] || PAYMENT_METHOD_LABELS[leg.paymentMethod] || ''}</div>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }).join('');
+
+  view.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">${icon('bus')} 交通卡余额</div>
+      <div class="stat-value ${left < 0 ? 'negative' : ''}">${yen(left)}</div>
+      <div class="stat-sub">已使用 ${yen(spent)} / 已加值 ${yen(total)}</div>
+      ${total > 0 ? budgetBarHtml(spent, total) : ''}
+      <p class="hint-text">在「记一笔开销」选交通 → 交通卡充值 / 购买套票，会自动列在下面</p>
     </div>
-    <div class="stat-card total-card"><div class="stat-label">合计</div><div class="stat-value">${yen(grandTotal)}</div></div>
+
+    ${topupRows ? `<h3 class="section-title">加值记录</h3><div class="balance-list">${topupRows}</div>` : ''}
+    ${passRows ? `<h3 class="section-title">套票购买记录</h3><div class="balance-list">${passRows}</div>` : ''}
+
+    <h3 class="section-title">交通记录</h3>
+    <button type="button" class="secondary-btn" id="show-leg-form-btn">${LegForm.show ? '取消' : '＋ 记录一段交通'}</button>
+    ${LegForm.show ? `
+      <div class="stat-card" style="margin-top:12px;">
+        <div class="form-group">
+          <label>日期</label>
+          <input type="date" id="leg-date" value="${LegForm.date}">
+        </div>
+        <div class="form-group">
+          <label>出发地</label>
+          <input type="text" id="leg-from" placeholder="例如「住宿」" value="${escapeHtml(LegForm.from)}">
+        </div>
+        <div class="form-group">
+          <label>目的地</label>
+          <input type="text" id="leg-to" placeholder="例如「熊本站」" value="${escapeHtml(LegForm.to)}">
+        </div>
+        <div class="form-group">
+          <label>交通工具</label>
+          <div class="pill-group" id="leg-mode-group">
+            ${TRANSIT_MODES.map((m) => `<button type="button" class="pill ${LegForm.mode === m ? 'selected' : ''}" data-value="${m}">${m}</button>`).join('')}
+          </div>
+        </div>
+        <div class="form-group">
+          <label>使用方式</label>
+          <div class="pill-group" id="leg-usage-group">
+            <button type="button" class="pill ${LegForm.usage === 'card' ? 'selected' : ''}" data-value="card">交通卡扣款</button>
+            <button type="button" class="pill ${LegForm.usage === 'pass' ? 'selected' : ''}" data-value="pass">已购套票</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>金额 (JPY)${LegForm.usage === 'pass' ? '（选填，已购套票不扣任何余额）' : ''}</label>
+          <input type="number" id="leg-amount" min="0" step="1" placeholder="0" value="${LegForm.amount}">
+        </div>
+        <button type="button" class="primary-btn" id="save-leg-btn">${LegForm.id ? '保存修改' : '保存这一段'}</button>
+        ${LegForm.id ? '<button type="button" class="danger-btn" id="delete-leg-btn">删除</button>' : ''}
+      </div>
+    ` : ''}
+
+    ${dayGroupsHtml}
   `;
+
+  wireTransitEvents();
+}
+
+function wireTransitEvents() {
+  const view = byId('view-transit');
+
+  view.querySelectorAll('.record-row').forEach((el) => {
+    el.addEventListener('click', () => openExpenseModal(+el.dataset.id));
+  });
+  view.querySelectorAll('.leg-row').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (el.dataset.dedicated === '1') openLegEditor(+el.dataset.id);
+      else openExpenseModal(+el.dataset.id);
+    });
+  });
+
+  const showBtn = byId('show-leg-form-btn');
+  if (showBtn) {
+    showBtn.addEventListener('click', () => {
+      const wasShown = LegForm.show;
+      resetLegForm();
+      LegForm.show = !wasShown;
+      renderTransit();
+    });
+  }
+
+  const dateInput = byId('leg-date');
+  if (dateInput) dateInput.addEventListener('change', (e) => { LegForm.date = e.target.value; });
+  const fromInput = byId('leg-from');
+  if (fromInput) fromInput.addEventListener('input', (e) => { LegForm.from = e.target.value; });
+  const toInput = byId('leg-to');
+  if (toInput) toInput.addEventListener('input', (e) => { LegForm.to = e.target.value; });
+  const amountInput = byId('leg-amount');
+  if (amountInput) amountInput.addEventListener('input', (e) => { LegForm.amount = e.target.value; });
+
+  const modeGroup = byId('leg-mode-group');
+  if (modeGroup) {
+    modeGroup.querySelectorAll('.pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        LegForm.mode = btn.dataset.value;
+        modeGroup.querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
+      });
+    });
+  }
+  const usageGroup = byId('leg-usage-group');
+  if (usageGroup) {
+    usageGroup.querySelectorAll('.pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        LegForm.usage = btn.dataset.value;
+        renderTransit();
+      });
+    });
+  }
+
+  const saveBtn = byId('save-leg-btn');
+  if (saveBtn) saveBtn.addEventListener('click', saveLeg);
+  const deleteBtn = byId('delete-leg-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', deleteLeg);
+}
+
+async function saveLeg() {
+  if (!LegForm.date) { toast('请选择日期'); return; }
+  if (!LegForm.mode) { toast('请选择交通工具'); return; }
+  const amount = parseInt(LegForm.amount, 10) || 0;
+  if (LegForm.usage === 'card' && amount <= 0) { toast('请输入金额'); return; }
+
+  const expense = {
+    date: LegForm.date,
+    category: 'transport',
+    amount,
+    paymentMethod: null,
+    note: '',
+    isSplit: false,
+    payerId: null,
+    splitType: null,
+    participants: [],
+    photo: null,
+    transitSubtype: 'single',
+    from: LegForm.from.trim(),
+    to: LegForm.to.trim(),
+    transitMode: LegForm.mode,
+    transitUsage: LegForm.usage,
+  };
+
+  if (LegForm.id != null) {
+    expense.id = LegForm.id;
+    await DB.updateExpense(expense);
+  } else {
+    await DB.addExpense(expense);
+  }
+  resetLegForm();
+  await refreshData();
+  toast('已保存');
+}
+
+async function deleteLeg() {
+  if (!LegForm.id) return;
+  if (!confirm('确定删除这段交通记录？')) return;
+  await DB.deleteExpense(LegForm.id);
+  resetLegForm();
+  await refreshData();
+  toast('已删除');
 }
 
 // ---- Split summary (per-expense, so each dinner/ticket can be settled individually) ----
@@ -680,6 +947,10 @@ function openExpenseModal(id = null) {
       settled: !!p.settled, settledMethod: p.settledMethod || null, settledDate: p.settledDate || null,
     }]));
     FormState.photo = e.photo || null;
+    FormState.transitSubtype = e.transitSubtype || null;
+    FormState.transitFrom = e.from || '';
+    FormState.transitTo = e.to || '';
+    FormState.transitMode = e.transitMode || '';
   } else {
     FormState.id = null;
     FormState.date = todayStr();
@@ -699,6 +970,10 @@ function openExpenseModal(id = null) {
     FormState.taxAmount = '';
     FormState.settledMap = new Map();
     FormState.photo = null;
+    FormState.transitSubtype = null;
+    FormState.transitFrom = '';
+    FormState.transitTo = '';
+    FormState.transitMode = '';
   }
   renderExpenseModal();
   modal.classList.remove('hidden');
@@ -728,15 +1003,14 @@ function renderExpenseModal() {
             ${CATEGORIES.map((c) => `<button type="button" class="pill ${FormState.category === c.id ? 'selected' : ''}" data-value="${c.id}" style="--pill-color:var(${c.var})">${c.label}</button>`).join('')}
           </div>
         </div>
+        <div id="transport-extra"></div>
         <div class="form-group">
           <label>金额 (JPY)</label>
           <input type="number" id="f-amount" inputmode="numeric" min="0" step="1" placeholder="0" value="${FormState.amount}">
         </div>
         <div class="form-group">
           <label>付款方式</label>
-          <div class="pill-group" id="f-payment-group">
-            ${PAYMENT_METHODS.map((p) => `<button type="button" class="pill ${FormState.paymentMethod === p.id ? 'selected' : ''}" data-value="${p.id}">${p.label}</button>`).join('')}
-          </div>
+          <div class="pill-group" id="f-payment-group"></div>
         </div>
         <div class="form-group">
           <label>备注</label>
@@ -759,8 +1033,77 @@ function renderExpenseModal() {
     </div>
   `;
   renderPhotoPicker();
+  renderTransportExtra();
+  renderPaymentGroup();
   renderSplitDetail();
   wireExpenseModal();
+}
+
+function renderTransportExtra() {
+  const el = byId('transport-extra');
+  if (!el) return;
+  if (FormState.category !== 'transport') { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="form-group">
+      <label>交通类型</label>
+      <div class="pill-group" id="f-transit-subtype-group">
+        <button type="button" class="pill ${FormState.transitSubtype === 'topup' ? 'selected' : ''}" data-value="topup">交通卡充值</button>
+        <button type="button" class="pill ${FormState.transitSubtype === 'pass' ? 'selected' : ''}" data-value="pass">购买套票</button>
+        <button type="button" class="pill ${FormState.transitSubtype === 'single' ? 'selected' : ''}" data-value="single">单程票</button>
+      </div>
+      ${FormState.transitSubtype === 'single'
+        ? '<p class="hint-text">用交通卡余额或已购套票支付的行程，去导航栏「交通卡」记录</p>'
+        : '<p class="hint-text">每一段具体交通（几点从哪到哪）在下面导航栏「交通卡」里记录</p>'}
+    </div>
+    ${FormState.transitSubtype === 'single' ? `
+      <div class="form-group">
+        <label>出发地（选填）</label>
+        <input type="text" id="f-transit-from" placeholder="例如「住宿」" value="${escapeHtml(FormState.transitFrom)}">
+      </div>
+      <div class="form-group">
+        <label>目的地（选填）</label>
+        <input type="text" id="f-transit-to" placeholder="例如「熊本站」" value="${escapeHtml(FormState.transitTo)}">
+      </div>
+      <div class="form-group">
+        <label>交通工具</label>
+        <div class="pill-group" id="f-transit-mode-group">
+          ${TRANSIT_MODES.map((m) => `<button type="button" class="pill ${FormState.transitMode === m ? 'selected' : ''}" data-value="${m}">${m}</button>`).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+  const subtypeGroup = byId('f-transit-subtype-group');
+  subtypeGroup.querySelectorAll('.pill').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      FormState.transitSubtype = btn.dataset.value;
+      renderTransportExtra();
+    });
+  });
+  const fromInput = byId('f-transit-from');
+  if (fromInput) fromInput.addEventListener('input', (e) => { FormState.transitFrom = e.target.value; });
+  const toInput = byId('f-transit-to');
+  if (toInput) toInput.addEventListener('input', (e) => { FormState.transitTo = e.target.value; });
+  const modeGroup = byId('f-transit-mode-group');
+  if (modeGroup) {
+    modeGroup.querySelectorAll('.pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        FormState.transitMode = btn.dataset.value;
+        modeGroup.querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
+      });
+    });
+  }
+}
+
+function renderPaymentGroup() {
+  const el = byId('f-payment-group');
+  if (!el) return;
+  el.innerHTML = PAYMENT_METHODS.map((p) => `<button type="button" class="pill ${FormState.paymentMethod === p.id ? 'selected' : ''}" data-value="${p.id}">${p.label}</button>`).join('');
+  el.querySelectorAll('.pill').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      FormState.paymentMethod = btn.dataset.value;
+      el.querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
+    });
+  });
 }
 
 function renderPhotoPicker() {
@@ -912,12 +1255,12 @@ function wireExpenseModal() {
     btn.addEventListener('click', () => {
       FormState.category = btn.dataset.value;
       byId('f-category-group').querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
-    });
-  });
-  byId('f-payment-group').querySelectorAll('.pill').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      FormState.paymentMethod = btn.dataset.value;
-      byId('f-payment-group').querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
+      if (FormState.category !== 'transport') {
+        FormState.transitSubtype = null;
+      } else if (!FormState.transitSubtype) {
+        FormState.transitSubtype = 'topup';
+      }
+      renderTransportExtra();
     });
   });
 
@@ -955,9 +1298,11 @@ function wireExpenseModal() {
 }
 
 async function saveExpenseFromForm() {
-  const amount = parseInt(FormState.amount, 10);
   if (!FormState.date) { toast('请选择日期'); return; }
+  const amount = parseInt(FormState.amount, 10);
   if (!amount || amount <= 0) { toast('请输入有效金额'); return; }
+  const isSingleTicket = FormState.category === 'transport' && FormState.transitSubtype === 'single';
+  if (isSingleTicket && !FormState.transitMode) { toast('请选择交通工具'); return; }
 
   let participants = [];
   if (FormState.isSplit) {
@@ -992,6 +1337,10 @@ async function saveExpenseFromForm() {
     splitType: FormState.isSplit ? FormState.splitType : null,
     participants,
     photo: FormState.photo || null,
+    transitSubtype: FormState.category === 'transport' ? FormState.transitSubtype : null,
+    from: isSingleTicket ? FormState.transitFrom.trim() : '',
+    to: isSingleTicket ? FormState.transitTo.trim() : '',
+    transitMode: isSingleTicket ? FormState.transitMode : '',
   };
 
   if (FormState.id != null) {
@@ -1036,12 +1385,12 @@ function csvEscape(v) {
 }
 
 function exportExpensesCSV() {
-  const header = ['日期', '分类', '金额', '付款方式', '备注', '是否分账', '参与分账人员', '各自分摊金额', '各自还款状态', '垫付人', '是否有照片'];
+  const header = ['日期', '分类', '金额', '付款方式', '备注', '是否分账', '参与分账人员', '各自分摊金额', '各自还款状态', '垫付人', '是否有照片', '出发地', '目的地', '交通工具', '交通使用方式'];
   const rows = [header];
   const sorted = [...State.expenses].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
   for (const e of sorted) {
     const cat = CATEGORY_MAP[e.category]?.label || e.category;
-    const pm = PAYMENT_METHODS.find((p) => p.id === e.paymentMethod)?.label || e.paymentMethod;
+    const pm = PAYMENT_METHOD_LABELS[e.paymentMethod] || e.paymentMethod || '';
     const names = (e.participants || []).map((p) => personName(p.personId)).join('/');
     const amounts = (e.participants || []).map((p) => p.amount).join('/');
     const status = (e.participants || []).map((p) => {
@@ -1049,7 +1398,8 @@ function exportExpensesCSV() {
       return p.settled ? `已还(${p.settledMethod === 'card' ? '卡' : '现金'})` : '未还';
     }).join('/');
     const payer = e.payerId ? personName(e.payerId) : '';
-    rows.push([e.date, cat, e.amount, pm, e.note || '', e.isSplit ? '是' : '否', names, amounts, status, payer, e.photo ? '是' : '否']);
+    const usage = TRANSIT_USAGE_LABELS[e.transitUsage] || '';
+    rows.push([e.date, cat, e.amount, pm, e.note || '', e.isSplit ? '是' : '否', names, amounts, status, payer, e.photo ? '是' : '否', e.from || '', e.to || '', e.transitMode || '', usage]);
   }
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
   downloadFile(`九州旅行开销_${todayStr()}.csv`, '﻿' + csv, 'text/csv;charset=utf-8');

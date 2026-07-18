@@ -342,6 +342,7 @@ button, input, select { font-family: inherit; }
 .section-title-label .icon { color: var(--text-muted); }
 .section-total { font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .stats-list { display: flex; flex-direction: column; gap: 18px; }
+.stat-card .stats-list { margin-top: 16px; }
 .stats-row-top { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 8px; }
 .stats-cat { font-weight: 700; }
 .stats-pct { color: var(--text-muted); font-size: 13px; }
@@ -374,6 +375,7 @@ button, input, select { font-family: inherit; }
 .expense-debt-header { display: flex; align-items: center; gap: 10px; }
 .expense-debt-title { font-size: 16px; font-weight: 700; min-width: 0; }
 .expense-debt-meta { font-size: 13px; color: var(--text-muted); margin: 4px 0 12px 22px; }
+.expense-debt-meta.no-indent { margin-left: 0; }
 
 .debt-items { display: flex; flex-direction: column; }
 .debt-item { padding: 14px 0; border-top: 1px solid var(--gridline); }
@@ -381,6 +383,8 @@ button, input, select { font-family: inherit; }
 .debt-item-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 15px; }
 .debt-item-row .tx-text { min-width: 0; }
 .debt-item-muted { color: var(--text-muted); }
+.transit-leg-item { cursor: pointer; }
+.topup-row-right { display: flex; align-items: center; gap: 10px; }
 .debt-item-settled { opacity: 0.6; }
 .debt-item-settled .tx-text { text-decoration: line-through; }
 .settle-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }

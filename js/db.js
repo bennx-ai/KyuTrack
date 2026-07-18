@@ -1,6 +1,6 @@
 // IndexedDB wrapper — no external dependencies, promise-based.
 const DB_NAME = 'kyushu-expense-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise = null;
 
