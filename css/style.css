@@ -1,17 +1,19 @@
 :root {
   --surface-1: #ffffff;
   --surface-2: #ffffff;
-  --page-plane: #ffffff;
+  /* Slightly off-white so white cards still read as elevated above the page
+     even when the border/shadow is very subtle (tech/fintech look). */
+  --page-plane: #f5f6f2;
   --text-primary: #0b0b0b;
   --text-secondary: #52514e;
   --text-muted: #898781;
-  --gridline: #e1e0d9;
-  --border: rgba(11, 11, 11, 0.10);
-  --accent: #ff385c;
-  --accent-ink: #ffffff;
+  --gridline: #e7e8e2;
+  --border: rgba(11, 11, 11, 0.08);
+  --accent: #9fe870;
+  --accent-ink: #163300;
   --good: #0ca30c;
   --bad: #d03b3b;
-  --card-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.07);
+  --card-shadow: 0 1px 2px rgba(11,11,11,0.03), 0 2px 10px rgba(11,11,11,0.05);
 
   --series-1: #2a78d6; /* 交通 */
   --series-2: #1baf7a; /* 食物 */
@@ -20,32 +22,6 @@
   --series-5: #4a3aa7; /* 其他 */
   --series-6: #e34948; /* 门票 */
   --series-7: #e87ba4; /* 购物 */
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface-1: #1a1a19;
-    --surface-2: #292826;
-    --page-plane: #0d0d0d;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --gridline: #2c2c2a;
-    --border: rgba(255, 255, 255, 0.10);
-    --accent: #ff5f7e;
-    --accent-ink: #ffffff;
-    --good: #0ca30c;
-    --bad: #d03b3b;
-    --card-shadow: none;
-
-    --series-1: #3987e5;
-    --series-2: #199e70;
-    --series-3: #c98500;
-    --series-4: #008300;
-    --series-5: #9085e9;
-    --series-6: #e66767;
-    --series-7: #d55181;
-  }
 }
 
 * { box-sizing: border-box; -webkit-text-size-adjust: 100%; }
@@ -264,7 +240,7 @@ button, input, select { font-family: inherit; }
 .pill.selected {
   background: var(--pill-color, var(--accent));
   border-color: var(--pill-color, var(--accent));
-  color: #fff;
+  color: var(--pill-ink, var(--accent-ink));
   font-weight: 700;
 }
 
@@ -295,16 +271,63 @@ button, input, select { font-family: inherit; }
 }
 .stat-card + .stat-card { margin-top: 14px; }
 .total-card { margin-top: 6px; }
-.stat-label { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
-.stat-label .icon { flex-shrink: 0; color: var(--text-muted); }
-.stat-value { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.stat-label { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; }
+.stat-label-spread { justify-content: space-between; font-size: 17px; margin-bottom: -6px; }
+.icon-badge {
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--badge-color, var(--accent)) 16%, white);
+  color: var(--badge-color, var(--accent));
+}
+.stat-value { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .stat-value.negative { color: var(--bad); }
 .stat-value.muted { color: var(--text-muted); font-size: 20px; }
 .stat-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+.hero-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+/* Featured overview cards: 剩余现金 (bright accent bg, black/white content)
+   and 卡内余额 (black bg, accent/white content). */
+.stat-card.card-accent { background: var(--accent); border-color: transparent; }
+.stat-card.card-accent .stat-label,
+.stat-card.card-accent .stat-value,
+.stat-card.card-accent .stat-sub,
+.stat-card.card-accent .stat-pct { color: var(--text-primary); }
+.stat-card.card-accent .stat-value.negative,
+.stat-card.card-accent .stat-pct.negative { color: var(--bad); }
+.stat-card.card-accent .icon-badge { background: #ffffff; color: var(--text-primary); }
+.stat-card.card-accent .bar-track { background: #ffffff; }
+.stat-card.card-accent { --bar-fill-color: var(--text-primary); }
+.stat-card.card-accent .flow-line.positive { color: var(--good); }
+.stat-card.card-accent .flow-line.negative { color: var(--bad); }
+
+.stat-card.card-dark { background: var(--text-primary); border-color: transparent; }
+.stat-card.card-dark .stat-label,
+.stat-card.card-dark .stat-sub,
+.stat-card.card-dark .stat-pct { color: #ffffff; }
+.stat-card.card-dark .stat-value { color: var(--accent); }
+.stat-card.card-dark .stat-value.muted { color: var(--text-muted); }
+.stat-card.card-dark .stat-value.negative,
+.stat-card.card-dark .stat-pct.negative { color: var(--bad); }
+.stat-card.card-dark .bar-track { background: rgba(255,255,255,0.18); }
+.stat-card.card-dark .icon-badge { background: var(--accent); color: var(--text-primary); }
+.stat-card.card-dark .flow-line.positive { color: var(--good); }
+.stat-card.card-dark .flow-line.negative { color: var(--bad); }
+.hero-top-text { min-width: 0; }
+.progress-ring { position: relative; flex-shrink: 0; }
+.progress-ring svg { display: block; }
+.progress-ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800; color: var(--text-primary); }
+.progress-ring-label.negative { color: var(--bad); }
 .stat-bar { margin-top: 12px; }
 .stat-pct { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
 .stat-pct.negative { color: var(--bad); }
 .flow-line { margin-top: 8px; font-weight: 700; }
+.flow-columns { display: flex; gap: 10px; margin: 14px 0; }
+.flow-col { flex: 1; min-width: 0; background: #ffffff; border: 1px solid var(--gridline); border-radius: 14px; padding: 12px 14px; box-shadow: var(--card-shadow); }
+.flow-col-label { font-size: 13px; font-weight: 800; color: var(--text-secondary); margin-bottom: 4px; }
+.flow-col-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.flow-col-value.muted { opacity: 0.6; font-weight: 600; }
 
 /* ---- Expense list ---- */
 .empty-hint { color: var(--text-muted); text-align: center; margin-top: 60px; font-size: 15px; }
@@ -320,15 +343,16 @@ button, input, select { font-family: inherit; }
 }
 .expense-cat-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
 .expense-main { flex: 1; min-width: 0; }
-.expense-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; font-size: 16px; font-weight: 700; }
+.expense-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
 .expense-cat { min-width: 0; }
-.expense-amount { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.expense-my-share { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 3px; }
-.expense-sub { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+.expense-amount { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.expense-my-share { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted); flex-shrink: 0; }
+.expense-sub { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+.expense-sub-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .expense-note { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 .split-badge {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
@@ -384,6 +408,10 @@ button, input, select { font-family: inherit; }
 .debt-item-row .tx-text { min-width: 0; }
 .debt-item-muted { color: var(--text-muted); }
 .transit-leg-item { cursor: pointer; }
+.leg-usage-label { font-size: 13px; font-weight: 700; margin-top: 4px; }
+.leg-usage-card { color: var(--series-1); }
+.leg-usage-single { color: var(--series-3); }
+.leg-usage-pass { color: var(--series-5); }
 .topup-row-right { display: flex; align-items: center; gap: 10px; }
 .debt-item-settled { opacity: 0.6; }
 .debt-item-settled .tx-text { text-decoration: line-through; }
@@ -393,7 +421,7 @@ button, input, select { font-family: inherit; }
 .settle-method-btn {
   flex: 1;
   padding: 11px 12px;
-  border-radius: 12px;
+  border-radius: 999px;
   border: 1.5px solid var(--accent);
   background: var(--surface-1);
   color: var(--accent);

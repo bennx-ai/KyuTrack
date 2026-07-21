@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kyushu-expense-v19';
+const CACHE_NAME = 'kyushu-expense-v38';
 const APP_SHELL = [
   './',
   'index.html',

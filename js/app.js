@@ -15,7 +15,7 @@ const PAYMENT_METHODS = [
 ];
 const PAYMENT_METHOD_LABELS = { cash: '现金', card: '卡' };
 const TRANSIT_MODES = ['巴士', '地铁', '新干线', '电车', '脚踏车', '渡轮', '其它'];
-const TRANSIT_USAGE_LABELS = { card: '交通卡扣款', pass: '已购套票' };
+const TRANSIT_USAGE_LABELS = { card: '交通卡扣款', pass: '套票' };
 
 // ---- Line icons (stroke=currentColor so they follow text/theme color automatically) ----
 const ICON_PATHS = {
@@ -27,6 +27,12 @@ const ICON_PATHS = {
 };
 function icon(name, size = 18) {
   return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name]}</svg>`;
+}
+// Icon inside a soft-tinted colored circle — used for stat-card labels so each
+// metric reads as its own "badge" instead of a plain inline glyph.
+function iconBadge(name, colorVar = '--accent', size = 34) {
+  const iconSize = Math.round(size * 0.53);
+  return `<span class="icon-badge" style="--badge-color:var(${colorVar});width:${size}px;height:${size}px;">${icon(name, iconSize)}</span>`;
 }
 
 // ---- App state (in-memory cache, source of truth is IndexedDB) ----
@@ -238,8 +244,8 @@ function navigate(view) {
   document.querySelectorAll('.bottom-nav button').forEach((b) => {
     b.classList.toggle('active', b.dataset.view === view);
   });
-  const titles = { overview: '总览', expenses: '记录', transit: '交通卡', split: '分账', settings: '设置' };
-  byId('page-title').textContent = titles[view] || '';
+  const titles = { overview: '主页', expenses: '记录', transit: '交通卡', split: '分账', settings: '设置' };
+  if (view !== 'overview') byId('page-title').textContent = titles[view] || '';
   renderCurrentView();
 }
 
@@ -264,9 +270,26 @@ function budgetBarHtml(spent, total) {
   const over = spent > total;
   return `
     <div class="bar-track stat-bar">
-      <div class="bar-fill" style="width:${width}%;background:${over ? 'var(--bad)' : 'var(--accent)'}"></div>
+      <div class="bar-fill" style="width:${width}%;background:${over ? 'var(--bad)' : 'var(--bar-fill-color, var(--accent))'}"></div>
     </div>
     <div class="stat-pct ${over ? 'negative' : ''}">已用 ${pct}%</div>
+  `;
+}
+
+function progressRingHtml(pct, size = 72, stroke = 8) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.min(100, Math.max(0, pct));
+  const offset = c * (1 - clamped / 100);
+  const over = pct > 100;
+  return `
+    <div class="progress-ring" style="width:${size}px;height:${size}px;">
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--gridline)" stroke-width="${stroke}"/>
+        <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${over ? 'var(--bad)' : 'var(--accent)'}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${offset}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
+      </svg>
+      <div class="progress-ring-label ${over ? 'negative' : ''}">${pct}%</div>
+    </div>
   `;
 }
 
@@ -329,11 +352,14 @@ function settlementFlows() {
 
 function renderOverview() {
   const s = State.settings;
+  byId('page-title').textContent = s.selfPersonId ? `Hello, ${personName(s.selfPersonId)}` : '主页';
   const flows = settlementFlows();
   const cashSpent = State.expenses.filter((e) => e.paymentMethod === 'cash' && isMyExpense(e)).reduce((a, e) => a + e.amount, 0);
   const cardSpent = State.expenses.filter((e) => e.paymentMethod === 'card' && isMyExpense(e)).reduce((a, e) => a + e.amount, 0);
   const cashLeft = s.initialCash - cashSpent + flows.cash;
   const myTotalSpend = State.expenses.reduce((a, e) => a + myShare(e), 0);
+  const totalBudget = s.initialCash + ((s.cardEnabled && s.initialCard != null) ? s.initialCard : 0);
+  const budgetPct = totalBudget > 0 ? Math.round(((cashSpent + cardSpent) / totalBudget) * 100) : 0;
 
   const flowLine = (flow, label) => flow !== 0
     ? `<div class="stat-sub flow-line ${flow > 0 ? 'positive' : 'negative'}">${label}${flow > 0 ? '收回' : '付出'} ${signedYen(flow)}</div>`
@@ -346,6 +372,19 @@ function renderOverview() {
     if (byOrigin.cash !== 0) parts.push(flowLine(byOrigin.cash, '现金垫付'));
     if (byOrigin.card !== 0) parts.push(flowLine(byOrigin.card, '卡垫付'));
     return parts.join('');
+  };
+  // Two-column version (label on top, amount below) used under 剩余现金 —
+  // always shows both columns (¥0 if no flow) so the layout stays stable.
+  const flowColumnsHtml = (byOrigin, labelCash, labelCard) => {
+    const col = (flow, label) => {
+      const cls = flow > 0 ? 'positive' : flow < 0 ? 'negative' : 'muted';
+      return `
+        <div class="flow-col">
+          <div class="flow-col-label">${label}</div>
+          <div class="flow-col-value ${cls}">${flow === 0 ? yen(0) : signedYen(flow)}</div>
+        </div>`;
+    };
+    return `<div class="flow-columns">${col(byOrigin.cash, labelCash)}${col(byOrigin.card, labelCard)}</div>`;
   };
 
   let cardHtml;
@@ -370,32 +409,35 @@ function renderOverview() {
       </div>`).join('');
   const debtCardHtml = debtRows ? `
     <div class="stat-card total-card">
-      <div class="stat-label">${icon('users')} 分账未结</div>
+      <div class="stat-label">${iconBadge('users', '--series-5')} 分账未结</div>
       <div class="balance-list">${debtRows}</div>
     </div>` : '';
 
   byId('view-overview').innerHTML = `
-    <div class="stat-card">
-      <div class="stat-label">${icon('wallet')} 剩余现金</div>
+    <div class="stat-card card-accent">
+      <div class="stat-label stat-label-spread"><span>剩余现金</span>${iconBadge('wallet', undefined, 53)}</div>
       <div class="stat-value ${cashLeft < 0 ? 'negative' : ''}">${yen(cashLeft)}</div>
       <div class="stat-sub">已花费 ${yen(cashSpent)} / 初始 ${yen(s.initialCash)}</div>
       ${budgetBarHtml(cashSpent, s.initialCash)}
-      ${flowLinesByOrigin(flows.cashByOrigin)}
     </div>
-    <div class="stat-card">
-      <div class="stat-label">${icon('card')} 剩余卡内余额</div>
+    ${flowColumnsHtml(flows.cashByOrigin, '回收-现金', '回收-卡')}
+    <div class="stat-card card-dark">
+      <div class="stat-label stat-label-spread"><span>卡内余额</span>${iconBadge('card', undefined, 53)}</div>
       ${cardHtml}
     </div>
-    <div class="stat-card total-card">
-      <div class="stat-label">我的个人花费</div>
-      <div class="stat-value">${yen(myTotalSpend)}</div>
-      <div class="stat-sub">共 ${State.expenses.length} 笔记录${s.selfPersonId ? '（不含代垫他人的部分）' : ''}</div>
+    <div class="stat-card total-card hero-card">
+      <div class="hero-top">
+        <div class="hero-top-text">
+          <div class="stat-label">我的个人花费</div>
+          <div class="stat-value">${yen(myTotalSpend)}</div>
+          <div class="stat-sub">共 ${State.expenses.length} 笔记录${s.selfPersonId ? '（不含代垫他人的部分）' : ''}</div>
+        </div>
+        ${totalBudget > 0 ? progressRingHtml(budgetPct) : ''}
+      </div>
       ${renderCategoryBreakdownHtml()}
     </div>
     ${debtCardHtml}
-    <button class="secondary-btn" id="ov-add-btn">＋ 记一笔开销</button>
   `;
-  byId('ov-add-btn').addEventListener('click', () => openExpenseModal());
 }
 
 // ---- Expenses list ----
@@ -432,14 +474,17 @@ function renderExpenseRow(e) {
       <div class="expense-main">
         <div class="expense-top">
           <span class="expense-cat">${cat.label}</span>
-          <span class="expense-amount">${yen(e.amount)}${mine != null ? `<span class="expense-my-share">我的份 ${yen(mine)}</span>` : ''}</span>
+          <span class="expense-amount">${yen(e.amount)}</span>
         </div>
         <div class="expense-sub">
-          <span>${e.date}</span>
-          <span>${pmLabel}</span>
-          ${e.note ? `<span class="expense-note">${escapeHtml(e.note)}</span>` : ''}
-          ${e.isSplit ? '<span class="split-badge">分账</span>' : ''}
-          ${e.photo ? `<span class="expense-photo-badge">${icon('camera', 13)}</span>` : ''}
+          <span class="expense-sub-left">
+            <span>${e.date}</span>
+            <span>${pmLabel}</span>
+            ${e.note ? `<span class="expense-note">${escapeHtml(e.note)}</span>` : ''}
+            ${e.isSplit ? '<span class="split-badge">分账</span>' : ''}
+            ${e.photo ? `<span class="expense-photo-badge">${icon('camera', 13)}</span>` : ''}
+          </span>
+          ${mine != null ? `<span class="expense-my-share">我的份 ${yen(mine)}</span>` : ''}
         </div>
       </div>
     </div>`;
@@ -485,7 +530,7 @@ function computeTransitBalances() {
   return { total, spent, left: total - spent };
 }
 
-const LegForm = { show: false, id: null, date: '', from: '', to: '', mode: '', amount: '', usage: 'card' };
+const LegForm = { show: false, id: null, date: '', from: '', to: '', mode: '', amount: '', usage: 'card', paymentMethod: 'cash' };
 
 function resetLegForm() {
   LegForm.show = false;
@@ -496,6 +541,7 @@ function resetLegForm() {
   LegForm.mode = '';
   LegForm.amount = '';
   LegForm.usage = 'card';
+  LegForm.paymentMethod = 'cash';
 }
 
 function openLegEditor(id) {
@@ -507,7 +553,8 @@ function openLegEditor(id) {
   LegForm.to = leg.to || '';
   LegForm.mode = leg.transitMode || '';
   LegForm.amount = leg.amount ? String(leg.amount) : '';
-  LegForm.usage = leg.transitUsage || 'card';
+  LegForm.usage = leg.transitUsage || 'single';
+  LegForm.paymentMethod = leg.paymentMethod || 'cash';
   LegForm.show = true;
   renderTransit();
 }
@@ -533,11 +580,18 @@ function renderTransit() {
 
   const listRow = (e, extra) => `
     <div class="balance-row record-row" data-id="${e.id}">
-      <span>${e.date}${extra ? ' · ' + escapeHtml(extra) : ''}</span>
+      <span><strong>${e.date}</strong>${extra ? ' · ' + escapeHtml(extra) : ''}</span>
       <span>${yen(e.amount)}</span>
     </div>`;
   const topupRows = topups.map((e) => listRow(e, PAYMENT_METHOD_LABELS[e.paymentMethod])).join('');
   const passRows = passes.map((e) => listRow(e, e.note)).join('');
+  // Every leg falls into exactly one of three usage categories — color-coded
+  // so the type is visible at a glance in the day-grouped list below.
+  const legUsageInfo = (leg) => leg.transitUsage === 'card'
+    ? { label: '交通卡扣款', cls: 'card' }
+    : leg.transitUsage === 'pass'
+      ? { label: '套票', cls: 'pass' }
+      : { label: '单程票', cls: 'single' };
 
   const dayGroupsHtml = groups.length === 0
     ? '<p class="empty-hint">还没有交通记录</p>'
@@ -548,32 +602,34 @@ function renderTransit() {
           <div class="expense-debt-header"><div class="expense-debt-title">${g.date}</div></div>
           <div class="expense-debt-meta no-indent">当日交通花费 ${yen(dayTotal)}</div>
           <div class="debt-items">
-            ${g.legs.map((leg) => `
+            ${g.legs.map((leg) => {
+              const usage = legUsageInfo(leg);
+              return `
               <div class="debt-item leg-row" data-id="${leg.id}" data-dedicated="${leg.transitUsage ? '1' : '0'}">
                 <div class="debt-item-row">
                   <span class="tx-text">${escapeHtml(leg.transitMode)}　${escapeHtml(leg.from || '')} → ${escapeHtml(leg.to || '')}</span>
                   <span class="tx-amount">${leg.amount > 0 ? yen(leg.amount) : '—'}</span>
                 </div>
-                <div class="hint-text">${TRANSIT_USAGE_LABELS[leg.transitUsage] || PAYMENT_METHOD_LABELS[leg.paymentMethod] || ''}</div>
-              </div>`).join('')}
+                <div class="leg-usage-label leg-usage-${usage.cls}">${usage.label}</div>
+              </div>`;
+            }).join('')}
           </div>
         </div>`;
     }).join('');
 
   view.innerHTML = `
-    <div class="stat-card">
-      <div class="stat-label">${icon('bus')} 交通卡余额</div>
+    <div class="stat-card card-accent">
+      <div class="stat-label stat-label-spread"><span>交通卡余额</span>${iconBadge('bus', undefined, 53)}</div>
       <div class="stat-value ${left < 0 ? 'negative' : ''}">${yen(left)}</div>
       <div class="stat-sub">已使用 ${yen(spent)} / 已加值 ${yen(total)}</div>
       ${total > 0 ? budgetBarHtml(spent, total) : ''}
-      <p class="hint-text">在「记一笔开销」选交通 → 交通卡充值 / 购买套票，会自动列在下面</p>
     </div>
 
-    ${topupRows ? `<h3 class="section-title">加值记录</h3><div class="balance-list">${topupRows}</div>` : ''}
+    ${topupRows ? `<h3 class="section-title">充值记录</h3><div class="balance-list">${topupRows}</div>` : ''}
     ${passRows ? `<h3 class="section-title">套票购买记录</h3><div class="balance-list">${passRows}</div>` : ''}
 
     <h3 class="section-title">交通记录</h3>
-    <button type="button" class="secondary-btn" id="show-leg-form-btn">${LegForm.show ? '取消' : '＋ 记录一段交通'}</button>
+    <button type="button" class="primary-btn" id="show-leg-form-btn" style="margin-bottom:16px;">${LegForm.show ? '取消' : '＋ 记录一段交通'}</button>
     ${LegForm.show ? `
       <div class="stat-card" style="margin-top:12px;">
         <div class="form-group">
@@ -598,11 +654,20 @@ function renderTransit() {
           <label>使用方式</label>
           <div class="pill-group" id="leg-usage-group">
             <button type="button" class="pill ${LegForm.usage === 'card' ? 'selected' : ''}" data-value="card">交通卡扣款</button>
-            <button type="button" class="pill ${LegForm.usage === 'pass' ? 'selected' : ''}" data-value="pass">已购套票</button>
+            <button type="button" class="pill ${LegForm.usage === 'single' ? 'selected' : ''}" data-value="single">单程票</button>
+            <button type="button" class="pill ${LegForm.usage === 'pass' ? 'selected' : ''}" data-value="pass">套票</button>
           </div>
         </div>
+        ${LegForm.usage === 'single' ? `
+          <div class="form-group">
+            <label>付款方式</label>
+            <div class="pill-group" id="leg-payment-group">
+              ${PAYMENT_METHODS.map((m) => `<button type="button" class="pill ${LegForm.paymentMethod === m.id ? 'selected' : ''}" data-value="${m.id}">${m.label}</button>`).join('')}
+            </div>
+          </div>
+        ` : ''}
         <div class="form-group">
-          <label>金额 (JPY)${LegForm.usage === 'pass' ? '（选填，已购套票不扣任何余额）' : ''}</label>
+          <label>金额 (JPY)${LegForm.usage === 'pass' ? '（选填，套票不扣任何余额）' : ''}</label>
           <input type="number" id="leg-amount" min="0" step="1" placeholder="0" value="${LegForm.amount}">
         </div>
         <button type="button" class="primary-btn" id="save-leg-btn">${LegForm.id ? '保存修改' : '保存这一段'}</button>
@@ -610,7 +675,7 @@ function renderTransit() {
       </div>
     ` : ''}
 
-    ${dayGroupsHtml}
+    <div class="debt-expense-list">${dayGroupsHtml}</div>
   `;
 
   wireTransitEvents();
@@ -666,6 +731,15 @@ function wireTransitEvents() {
       });
     });
   }
+  const paymentGroup = byId('leg-payment-group');
+  if (paymentGroup) {
+    paymentGroup.querySelectorAll('.pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        LegForm.paymentMethod = btn.dataset.value;
+        paymentGroup.querySelectorAll('.pill').forEach((b) => b.classList.toggle('selected', b === btn));
+      });
+    });
+  }
 
   const saveBtn = byId('save-leg-btn');
   if (saveBtn) saveBtn.addEventListener('click', saveLeg);
@@ -677,13 +751,13 @@ async function saveLeg() {
   if (!LegForm.date) { toast('请选择日期'); return; }
   if (!LegForm.mode) { toast('请选择交通工具'); return; }
   const amount = parseInt(LegForm.amount, 10) || 0;
-  if (LegForm.usage === 'card' && amount <= 0) { toast('请输入金额'); return; }
+  if ((LegForm.usage === 'card' || LegForm.usage === 'single') && amount <= 0) { toast('请输入金额'); return; }
 
   const expense = {
     date: LegForm.date,
     category: 'transport',
     amount,
-    paymentMethod: null,
+    paymentMethod: LegForm.usage === 'single' ? LegForm.paymentMethod : null,
     note: '',
     isSplit: false,
     payerId: null,
@@ -694,7 +768,7 @@ async function saveLeg() {
     from: LegForm.from.trim(),
     to: LegForm.to.trim(),
     transitMode: LegForm.mode,
-    transitUsage: LegForm.usage,
+    transitUsage: LegForm.usage === 'single' ? null : LegForm.usage,
   };
 
   if (LegForm.id != null) {
@@ -775,7 +849,7 @@ function renderSplitExpenseCard(exp) {
         <span class="tx-amount">${yen(p.amount)}</span>
       </div>
       <div class="settle-action">
-        <span class="settle-label">标记已还款</span>
+        <span class="settle-label">还款方式</span>
         <div class="settle-btns">
           <button type="button" class="settle-method-btn" data-expense="${exp.id}" data-person="${p.personId}" data-method="cash">现金</button>
           <button type="button" class="settle-method-btn" data-expense="${exp.id}" data-person="${p.personId}" data-method="card">卡</button>
@@ -1000,7 +1074,7 @@ function renderExpenseModal() {
         <div class="form-group">
           <label>分类</label>
           <div class="pill-group" id="f-category-group">
-            ${CATEGORIES.map((c) => `<button type="button" class="pill ${FormState.category === c.id ? 'selected' : ''}" data-value="${c.id}" style="--pill-color:var(${c.var})">${c.label}</button>`).join('')}
+            ${CATEGORIES.map((c) => `<button type="button" class="pill ${FormState.category === c.id ? 'selected' : ''}" data-value="${c.id}" style="--pill-color:var(${c.var});--pill-ink:#fff">${c.label}</button>`).join('')}
           </div>
         </div>
         <div id="transport-extra"></div>
@@ -1048,11 +1122,11 @@ function renderTransportExtra() {
       <label>交通类型</label>
       <div class="pill-group" id="f-transit-subtype-group">
         <button type="button" class="pill ${FormState.transitSubtype === 'topup' ? 'selected' : ''}" data-value="topup">交通卡充值</button>
-        <button type="button" class="pill ${FormState.transitSubtype === 'pass' ? 'selected' : ''}" data-value="pass">购买套票</button>
+        <button type="button" class="pill ${FormState.transitSubtype === 'pass' ? 'selected' : ''}" data-value="pass">套票</button>
         <button type="button" class="pill ${FormState.transitSubtype === 'single' ? 'selected' : ''}" data-value="single">单程票</button>
       </div>
       ${FormState.transitSubtype === 'single'
-        ? '<p class="hint-text">用交通卡余额或已购套票支付的行程，去导航栏「交通卡」记录</p>'
+        ? '<p class="hint-text">用交通卡余额或套票支付的行程，去导航栏「交通卡」记录</p>'
         : '<p class="hint-text">每一段具体交通（几点从哪到哪）在下面导航栏「交通卡」里记录</p>'}
     </div>
     ${FormState.transitSubtype === 'single' ? `
