@@ -111,15 +111,14 @@ button, input, select { font-family: inherit; }
 }
 .bottom-nav button {
   flex: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: none; border: none;
-  padding: 8px 4px 14px;
-  font-size: 14px;
+  padding: 10px 4px 24px;
   color: var(--text-muted);
 }
 .bottom-nav button.active { color: var(--accent); }
 .nav-icon { display: flex; line-height: 1; }
-.nav-icon svg { display: block; width: 28px; height: 28px; }
+.nav-icon svg { display: block; width: 32px; height: 32px; }
 
 .fab {
   position: fixed;
