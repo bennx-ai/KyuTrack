@@ -106,20 +106,19 @@ button, input, select { font-family: inherit; }
   display: flex;
   background: var(--surface-1);
   border-top: 1px solid var(--gridline);
-  padding-bottom: min(env(safe-area-inset-bottom), 5px);
+  padding-bottom: min(env(safe-area-inset-bottom), 22px);
   z-index: 10;
 }
 .bottom-nav button {
   flex: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: none; border: none;
-  padding: 6px 4px 5px;
-  font-size: 14px;
+  padding: 10px 4px 24px;
   color: var(--text-muted);
 }
 .bottom-nav button.active { color: var(--accent); }
 .nav-icon { display: flex; line-height: 1; }
-.nav-icon svg { display: block; width: 24px; height: 24px; }
+.nav-icon svg { display: block; width: 32px; height: 32px; }
 
 .fab {
   position: fixed;
@@ -296,7 +295,7 @@ button, input, select { font-family: inherit; }
 .stat-card.card-accent .stat-pct { color: var(--text-primary); }
 .stat-card.card-accent .stat-value.negative,
 .stat-card.card-accent .stat-pct.negative { color: var(--bad); }
-.stat-card.card-accent .icon-badge { background: #ffffff; color: var(--text-primary); }
+.stat-card.card-accent .icon-badge { background: var(--text-primary); color: var(--accent); }
 .stat-card.card-accent .bar-track { background: #ffffff; }
 .stat-card.card-accent { --bar-fill-color: var(--text-primary); }
 .stat-card.card-accent .flow-line.positive { color: var(--good); }

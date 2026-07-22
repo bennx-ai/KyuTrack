@@ -922,7 +922,7 @@ function renderSettings() {
       </select>
       <p class="hint-text">用来判断哪些开销和还款是你自己的现金/卡余额变化</p>
     </div>
-    <button class="secondary-btn" id="save-settings-btn">保存</button>
+    <button class="primary-btn" id="save-settings-btn">保存</button>
 
     <h3 class="section-title">同行伙伴</h3>
     <div class="person-manage-list">
@@ -932,11 +932,11 @@ function renderSettings() {
           <button type="button" class="icon-btn remove-person-btn" data-id="${p.id}" aria-label="删除">✕</button>
         </div>`).join('')}
     </div>
-    <button class="secondary-btn" id="add-person-btn">＋ 新增伙伴</button>
+    <button class="primary-btn" id="add-person-btn">＋ 新增伙伴</button>
 
     <h3 class="section-title">数据导出</h3>
-    <button class="secondary-btn" id="export-csv-btn">导出全部开销 CSV</button>
-    <button class="secondary-btn" id="export-json-btn">导出 JSON 备份</button>
+    <button class="primary-btn" id="export-csv-btn">导出全部开销 CSV</button>
+    <button class="primary-btn" id="export-json-btn">导出 JSON 备份</button>
   `;
 
   byId('save-settings-btn').addEventListener('click', async () => {
